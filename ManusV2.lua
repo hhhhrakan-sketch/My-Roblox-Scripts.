@@ -171,7 +171,7 @@ local autoTitleThread
 local defaultTitleText = "اًلًجًرًاًرًهً اًلًعًفًوًيًهً"
 
 local protectedUsernames = {
-    "Ghgdtuhvdddd",
+    "SSSSS",
     "2liiliil",
     "fzd_200",
     "1il5f",
