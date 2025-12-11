@@ -1,641 +1,1939 @@
--- LIWA Prompt (Right side, aim, dual boxes, title split, view + unview buttons + inline player info)
+-- LIWA Victim Panel — راكان مود 💚
+-- استهداف ضحية + تحكم + سبام + حماية + تايتل مخصص + نسخ 1-20
+
+-----------------[ الخدمات الأساسية ]-----------------
 
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local TextChatService = game:GetService("TextChatService")
-local UIS = game:GetService("UserInputService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
 
-local LP = Players.LocalPlayer
-local PlayerGui = LP:WaitForChild("PlayerGui")
-local Mouse = LP:GetMouse()
+-----------------[ نظام الإشعارات البسيط ]-----------------
 
--- ========== شات ==========
-local function sendChat(msg: string)
-	msg = tostring(msg or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-	if msg == "" then return end
-	pcall(function()
-		if TextChatService and TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-			local ch = TextChatService.TextChannels and TextChatService.TextChannels.RBXGeneral
-			if ch then ch:SendAsync(msg) end
-		end
-	end)
-	local events = RS:FindFirstChild("DefaultChatSystemChatEvents")
-	if events then
-		local say = events:FindFirstChild("SayMessageRequest")
-		if say and say:IsA("RemoteEvent") then
-			say:FireServer(msg, "All")
-		end
-	end
+local NotificationGui = Instance.new("ScreenGui")
+NotificationGui.Name = "LIWA_Notifications"
+NotificationGui.ResetOnSpawn = false
+NotificationGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+NotificationGui.Parent = CoreGui
+
+local activeNotifications = {}
+
+local function showNotification(message)
+    local notification = Instance.new("Frame")
+    notification.Size = UDim2.new(0, 320, 0, 60)
+    notification.Position = UDim2.new(1, -330, 0, 15 + (#activeNotifications * 70))
+    notification.BackgroundColor3 = Color3.new(0, 0, 0)
+    notification.BorderSizePixel = 2
+    notification.BorderColor3 = Color3.new(1, 1, 1)
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = notification
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -10, 1, -10)
+    label.Position = UDim2.new(0, 5, 0, 5)
+    label.BackgroundTransparency = 1
+    label.Text = message
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextWrapped = true
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.Parent = notification
+
+    notification.Parent = NotificationGui
+    table.insert(activeNotifications, notification)
+
+    notification.Position = UDim2.new(1, 400, 0, notification.Position.Y.Offset)
+    TweenService:Create(notification, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(1, -330, 0, notification.Position.Y.Offset)
+    }):Play()
+
+    task.delay(4, function()
+        if notification.Parent then
+            TweenService:Create(notification, TweenInfo.new(0.3), {
+                Position = UDim2.new(1, 400, 0, notification.Position.Y.Offset)
+            }):Play()
+            task.wait(0.35)
+            notification:Destroy()
+
+            local index = table.find(activeNotifications, notification)
+            if index then
+                table.remove(activeNotifications, index)
+            end
+
+            for i, notif in ipairs(activeNotifications) do
+                notif.Position = UDim2.new(1, -330, 0, 15 + ((i - 1) * 70))
+            end
+        end
+    end)
 end
 
--- ========== مساعدات ==========
-local function normTarget(t: string): string
-	t = tostring(t or ""):gsub("%s+", "")
-	return (t:sub(1,3)):lower()
+-----------------[ وظائف مساعدة ]-----------------
+
+local function findPlayerByPartialName(partialName)
+    if not partialName or partialName == "" then return nil end
+    partialName = partialName:lower()
+    local exact
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name:lower() == partialName or plr.DisplayName:lower() == partialName then
+            exact = plr
+            break
+        end
+    end
+    if exact then return exact end
+
+    local matches = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name:lower():sub(1, #partialName) == partialName
+            or plr.DisplayName:lower():sub(1, #partialName) == partialName then
+            table.insert(matches, plr)
+        end
+    end
+    if #matches == 1 then
+        return matches[1]
+    end
+    return nil
 end
 
-local function splitFirstWord(s: string)
-	local sp = s:find("%s")
-	if sp then return s:sub(1, sp-1), s:sub(sp+1) else return s, "" end
+local function getAccountAgeFromPlayer(plr)
+    if not plr then return 0,0,0 end
+    local days = plr.AccountAge or 0
+    local years = math.floor(days/365)
+    local months = math.floor((days%365)/30)
+    local rem = days%30
+    return years, months, rem
 end
 
-local function quoteIfNeeded(text: string): string
-	local t = (text or ""):gsub("^%s+",""):gsub("%s+$","")
-	if t == "" then return "" end
-	if t:match('^".*"$') then return t end
-	return '"'..t..'"'
+local function getVictimTools(plr)
+    local tools = {}
+    if not plr then return tools end
+
+    local backpack = plr:FindFirstChildOfClass("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(tools, tool.Name)
+            end
+        end
+    end
+    if plr.Character then
+        for _, tool in ipairs(plr.Character:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(tools, tool.Name)
+            end
+        end
+    end
+    return tools
 end
 
--- يحول سلسلة أوامر مثل ";size 3 ;neon ;paint pink ;titlepk {p} نص"
--- إلى سلسلة فيها حقن الهدف/استبدال {p}، وعلاج titlepk.
-local function processAuto(raw: string, first3: string): string
-	if not raw or raw == "" then return "" end
-	raw = raw:gsub("\r\n"," "):gsub("\n"," "):gsub("\t"," ")
-	raw = raw:gsub("%s+"," "):gsub("^%s+",""):gsub("%s+$","")
-	if raw == "" then return "" end
-	if not raw:find(";") then raw = ";"..raw end
+-----------------[ متغيرات عامة ]-----------------
 
-	local out = {}
-	local esc = first3:gsub("(%W)","%%%1")
+local currentVictimName = nil
+local originalCameraSubject = workspace.CurrentCamera.CameraSubject
+local isSpectating = false
 
-	for seg in raw:gmatch(";[^;]+") do
-		local body = seg:sub(2):gsub("^%s+",""):gsub("%s+$","")
-		if body ~= "" then
-			local cmd, rest = splitFirstWord(body)
-			local lc = (cmd or ""):lower()
+local bangActive = false
+local bangConnection
+local bangTargetPlayer
 
-			-- 1) استبدال {p}
-			if rest:find("{p}") then
-				rest = rest:gsub("{p}", first3)
-			else
-				-- 2) حقن الهدف بعد اسم الأمر إن لم يكن أول كلمة
-				if not rest:match("^%s*"..esc.."(%s+.*|$)") then
-					rest = (rest == "" and first3) or (first3.." "..rest)
-				end
-			end
+local bangFrontActive = false
+local bangFrontConnection
+local bangFrontTargetPlayer
 
-			-- 3) title/titlep/titlepk: اقتباس النص بعد الهدف
-			if lc == "titlepk" or lc == "titlep" or lc == "title" then
-				local pWord, tail = splitFirstWord(rest)
-				if pWord and pWord:lower() ~= first3 then
-					tail = (pWord and (pWord.." "..(tail or "")) or (tail or ""))
-					pWord = first3
-				end
-				if tail ~= "" then
-					rest = pWord.." "..quoteIfNeeded(tail)
-				else
-					rest = pWord
-				end
-			end
+local headSucking = false
+local headSuckTargetPlayer
+local headSuckAnimTrack
 
-			table.insert(out, ";"..cmd.." "..rest)
-		end
-	end
-	return table.concat(out, " ")
+local skidFlingActive = false
+local skidFlingConnection
+local IsFlinging = false
+
+local SIMPLE_OFFSET = Vector3.new(0,0.5,0)
+
+local autoButtonsActive = {}
+local autoButtonsThreads = {}
+
+local autoSpamActive = {}
+local autoSpamThreads = {}
+
+local antiCopyActive = false
+local antiCopyThread
+local antiCopyNoModActive = false
+local antiCopyNoModThread
+
+local autoTitleActive = false
+local autoTitleThread
+local defaultTitleText = "اًلًجًرًاًرًهً اًلًعًفًوًيًهً"
+
+local protectedUsernames = {
+    "Ghgdtuhvdddd",
+    "2liiliil",
+    "fzd_200",
+    "1il5f",
+    "1il5i",
+    "sj3zx"
+}
+
+-----------------[ أوامر HD Admin ; ]-----------------
+
+local function normalizeCommandString(cmd)
+    cmd = cmd:gsub("^%.", ";")
+    cmd = cmd:gsub(" %.", " ;")
+    return cmd
 end
 
--- ========== UI أساسيات ==========
-local function addCorner(instance, radius)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, radius or 6)
-	c.Parent = instance
+local function executeCommand(command)
+    local HDAdminHDClient = ReplicatedStorage:FindFirstChild("HDAdminHDClient")
+    if not HDAdminHDClient then return end
+    local Signals = HDAdminHDClient:FindFirstChild("Signals")
+    if not Signals then return end
+    local RequestCommandSilent = Signals:FindFirstChild("RequestCommandSilent")
+    if not RequestCommandSilent then return end
+
+    local finalCommand = normalizeCommandString(command)
+    pcall(function()
+        RequestCommandSilent:InvokeServer(finalCommand)
+    end)
 end
 
-local function addStroke(instance, thickness, color)
-	local s = Instance.new("UIStroke")
-	s.Thickness = thickness or 1
-	s.Color = color or Color3.fromRGB(0,0,0)
-	s.Transparency = 0.3
-	s.Parent = instance
+local function requireVictim()
+    if not currentVictimName then
+        showNotification("❌ لم يتم تحديد ضحية")
+        return nil
+    end
+    local victim = findPlayerByPartialName(currentVictimName)
+    if not victim then
+        showNotification("❌ الضحية غير موجودة في السيرفر")
+        return nil
+    end
+    return victim
 end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "LIWAPrompt"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = false
-gui.Parent = PlayerGui
+local function executeVictimCommand(cmd)
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(cmd.." "..victim.Name.." ")
+end
 
--- زر إظهار/إخفاء (تحت يسار)
-local toggle = Instance.new("TextButton")
-toggle.Name = "Toggle"
-toggle.Size = UDim2.fromOffset(58, 26)
-toggle.Position = UDim2.new(0, 12, 1, -40)
-toggle.AnchorPoint = Vector2.new(0, 1)
-toggle.Text = "LIWA"
-toggle.BackgroundColor3 = Color3.fromRGB(35,45,65)
-toggle.TextColor3 = Color3.fromRGB(240,240,240)
-toggle.Font = Enum.Font.GothamBold
-toggle.TextSize = 12
-toggle.Parent = gui
-addCorner(toggle, 6)
-addStroke(toggle, 1.2, Color3.fromRGB(0,0,0))
+local function executeFly(speed)
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";fly "..victim.Name.." "..tostring(speed).." ")
+end
 
--- الإطار الرئيسي (يمين فوق)
-local main = Instance.new("Frame")
-main.Name = "Main"
-main.Size = UDim2.fromOffset(360, 300)
-main.Position = UDim2.new(1, -372, 0, 12)
-main.AnchorPoint = Vector2.new(1, 0)
-main.BackgroundColor3 = Color3.fromRGB(24,28,40)
-main.BorderSizePixel = 0
-main.Parent = gui
-addCorner(main, 8)
-addStroke(main, 1.5, Color3.fromRGB(0,0,0))
+local function executeSpeed(speed)
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";speed "..victim.Name.." "..tostring(speed).." ")
+end
 
-local header = Instance.new("TextLabel")
-header.Size = UDim2.new(1,0,0,26)
-header.BackgroundColor3 = Color3.fromRGB(30,36,54)
-header.TextColor3 = Color3.fromRGB(250,250,250)
-header.Font = Enum.Font.GothamBold
-header.TextSize = 14
-header.Text = "LIWA Prompt"
-header.Parent = main
-addCorner(header, 8)
+local function executeSize(size)
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";size "..victim.Name.." "..tostring(size).." ")
+end
 
--- سحب النافذة من الهيدر
-local dragging = false
-local dragStart
-local startPos
+local function executeCharSkin(char)
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";char "..victim.Name.." "..char.." ")
+end
 
-header.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPos = main.Position
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-			end
-		end)
-	end
+local function executeColor(color)
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";colour "..victim.Name.." "..color.." ")
+end
+
+local function executeWhite()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";color "..victim.Name.." White ")
+end
+
+local function executeStopAll()
+    local victim = requireVictim()
+    if not victim then return end
+    local n = victim.Name
+    executeCommand(";unwormify "..n.." ;undog "..n.." ;unneon "..n.." ;unchar "..n.." ")
+end
+
+local function executeSuspendVictim()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";speed "..victim.Name.." 01. ")
+end
+
+local function executeUnsuspendVictim()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";speed "..victim.Name.." ")
+end
+
+local function executeSuspendFly()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";fly "..victim.Name.." 10. ")
+end
+
+local function executeUnsuspendFly()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";fly "..victim.Name.." ")
+end
+
+local function executeSuspendF()
+    local victim = requireVictim()
+    if not victim then return end
+    local n = victim.Name
+    executeCommand(";speed "..n.." 01. ;jp "..n.." ")
+end
+
+local function executeUnsuspendF()
+    local victim = requireVictim()
+    if not victim then return end
+    local n = victim.Name
+    executeCommand(";speed "..n.."  ;unjp "..n.." ")
+end
+
+local function executeSuspendJump()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";jp "..victim.Name.." ")
+end
+
+local function executeUnsuspendJump()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";unjp "..victim.Name.." ")
+end
+
+local function executeFlyInAir()
+    local victim = requireVictim()
+    if not victim then return end
+    local n = victim.Name
+    executeCommand(";jp "..n.." 999999999999999999 ;jump "..n.." ")
+end
+
+local function executePhase()
+    executeVictimCommand(";phase")
+end
+
+local function executePlane()
+    executeVictimCommand(";plane")
+end
+
+local function executeFreakify()
+    executeVictimCommand(";freakify")
+end
+
+-----------------[ أزرار تلقائية عامة ]-----------------
+
+local buttonInstances = {}
+local ScrollFrame
+local TitlesFrame
+
+local function toggleAutoButton(buttonType, func, interval)
+    if autoButtonsActive[buttonType] then
+        autoButtonsActive[buttonType] = false
+        autoButtonsThreads[buttonType] = nil
+        if buttonInstances[buttonType] then
+            buttonInstances[buttonType].Text = (buttonInstances[buttonType].Text:gsub(" ✅",""))
+            buttonInstances[buttonType].BackgroundColor3 = Color3.new(0,0,0)
+        end
+    else
+        autoButtonsActive[buttonType] = true
+        if buttonInstances[buttonType] then
+            buttonInstances[buttonType].Text = buttonInstances[buttonType].Text.." ✅"
+            buttonInstances[buttonType].BackgroundColor3 = Color3.new(0,0.5,0)
+        end
+        autoButtonsThreads[buttonType] = coroutine.wrap(function()
+            while autoButtonsActive[buttonType] do
+                func()
+                task.wait(interval)
+            end
+        end)()
+    end
+end
+
+-----------------[ مشاهدة / انتقال ]-----------------
+
+local function toggleSpectate()
+    local victim = requireVictim()
+    if not victim then return end
+
+    if not isSpectating then
+        if victim.Character and victim.Character:FindFirstChild("Humanoid") then
+            originalCameraSubject = workspace.CurrentCamera.CameraSubject
+            workspace.CurrentCamera.CameraSubject = victim.Character.Humanoid
+            isSpectating = true
+            if buttonInstances["spectate"] then
+                buttonInstances["spectate"].Text = "إلغاء المشاهدة"
+            end
+        end
+    else
+        workspace.CurrentCamera.CameraSubject = originalCameraSubject
+        isSpectating = false
+        if buttonInstances["spectate"] then
+            buttonInstances["spectate"].Text = "مشاهدة"
+        end
+    end
+end
+
+local function teleportToPlayer()
+    local victim = requireVictim()
+    if not victim then return end
+    if victim.Character and victim.Character:FindFirstChild("HumanoidRootPart")
+    and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        player.Character.HumanoidRootPart.CFrame =
+            victim.Character.HumanoidRootPart.CFrame + Vector3.new(0,3,0)
+    end
+end
+
+-----------------[ Bang / BangFront / HeadSuck ]-----------------
+
+local function playBangAnimation()
+    local char = player.Character
+    if not char then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return nil end
+
+    for _, t in ipairs(hum:GetPlayingAnimationTracks()) do
+        t:Stop()
+    end
+
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "rbxassetid://10714068222"
+    local track = hum:LoadAnimation(anim)
+    track.Looped = true
+    track:Play()
+    pcall(function() track:AdjustSpeed(2000) end)
+    return track
+end
+
+local function startBang()
+    local victim = requireVictim()
+    if not victim or not victim.Character then return end
+
+    bangActive = true
+    bangTargetPlayer = victim
+    local animTrack = playBangAnimation()
+    if bangConnection then bangConnection:Disconnect() end
+
+    bangConnection = RunService.Heartbeat:Connect(function()
+        if bangActive and bangTargetPlayer and bangTargetPlayer.Character and player.Character then
+            local tHRP = bangTargetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local pHRP = player.Character:FindFirstChild("HumanoidRootPart")
+            if tHRP and pHRP then
+                local dist = 1
+                pHRP.CFrame = CFrame.new(
+                    tHRP.Position + (tHRP.CFrame.LookVector * -dist),
+                    tHRP.Position
+                )
+            end
+            if not animTrack or not animTrack.IsPlaying then
+                animTrack = playBangAnimation()
+            end
+        end
+    end)
+
+    if buttonInstances["bang"] then
+        buttonInstances["bang"].Text = "بانق ✅"
+        buttonInstances["bang"].BackgroundColor3 = Color3.new(0,0.5,0)
+    end
+end
+
+local function stopBang()
+    bangActive = false
+    bangTargetPlayer = nil
+    if bangConnection then
+        bangConnection:Disconnect()
+        bangConnection = nil
+    end
+    if player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            for _, t in ipairs(hum:GetPlayingAnimationTracks()) do
+                t:Stop()
+            end
+        end
+    end
+    if buttonInstances["bang"] then
+        buttonInstances["bang"].Text = "بانق"
+        buttonInstances["bang"].BackgroundColor3 = Color3.new(0,0,0)
+    end
+end
+
+local function toggleBang()
+    if bangActive then stopBang() else startBang() end
+end
+
+local function startBangFront()
+    local victim = requireVictim()
+    if not victim or not victim.Character then return end
+
+    bangFrontActive = true
+    bangFrontTargetPlayer = victim
+    local animTrack = playBangAnimation()
+    if bangFrontConnection then bangFrontConnection:Disconnect() end
+
+    bangFrontConnection = RunService.Heartbeat:Connect(function()
+        if bangFrontActive and bangFrontTargetPlayer and bangFrontTargetPlayer.Character and player.Character then
+            local tHRP = bangFrontTargetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local pHRP = player.Character:FindFirstChild("HumanoidRootPart")
+            if tHRP and pHRP then
+                local forward = tHRP.CFrame.LookVector
+                local newPos = tHRP.Position + (forward * 1)
+                pHRP.CFrame = CFrame.new(newPos, tHRP.Position)
+            end
+            if not animTrack or not animTrack.IsPlaying then
+                animTrack = playBangAnimation()
+            end
+        end
+    end)
+
+    if buttonInstances["bangFront"] then
+        buttonInstances["bangFront"].Text = "بانق من الامام ✅"
+        buttonInstances["bangFront"].BackgroundColor3 = Color3.new(0,0.5,0)
+    end
+end
+
+local function stopBangFront()
+    bangFrontActive = false
+    bangFrontTargetPlayer = nil
+    if bangFrontConnection then
+        bangFrontConnection:Disconnect()
+        bangFrontConnection = nil
+    end
+    if player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            for _, t in ipairs(hum:GetPlayingAnimationTracks()) do
+                t:Stop()
+            end
+        end
+    end
+    if buttonInstances["bangFront"] then
+        buttonInstances["bangFront"].Text = "بانق من الامام"
+        buttonInstances["bangFront"].BackgroundColor3 = Color3.new(0,0,0)
+    end
+end
+
+local function toggleBangFront()
+    if bangFrontActive then stopBangFront() else startBangFront() end
+end
+
+-- Head Suck
+local function updateHeadSuck()
+    while headSucking do
+        local char = player.Character
+        local victim = headSuckTargetPlayer
+        if char and victim and victim.Character then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            local head = victim.Character:FindFirstChild("Head")
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hrp and head and hum then
+                hum.Sit = true
+                if not headSuckAnimTrack then
+                    local anim = Instance.new("Animation")
+                    anim.AnimationId = "rbxassetid://2506281703"
+                    headSuckAnimTrack = hum:LoadAnimation(anim)
+                    headSuckAnimTrack.Looped = true
+                    headSuckAnimTrack:Play()
+                    headSuckAnimTrack:AdjustSpeed(1.5)
+                end
+                local dir = head.CFrame.LookVector
+                local pos = head.Position + dir * 1.5
+                hrp.CFrame = CFrame.new(pos, head.Position)
+                hrp.Velocity = Vector3.new(0,2,0)
+            end
+        end
+        RunService.Heartbeat:Wait()
+    end
+
+    if player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.Sit = false end
+    end
+    if headSuckAnimTrack then
+        headSuckAnimTrack:Stop()
+        headSuckAnimTrack = nil
+    end
+end
+
+local function startHeadSuck(victim)
+    headSuckTargetPlayer = victim
+    headSucking = true
+    task.spawn(updateHeadSuck)
+    if buttonInstances["headSuck"] then
+        buttonInstances["headSuck"].Text = "بانق بالراس ✅"
+        buttonInstances["headSuck"].BackgroundColor3 = Color3.new(0,0.5,0)
+    end
+end
+
+local function stopHeadSuck()
+    headSucking = false
+    headSuckTargetPlayer = nil
+    if buttonInstances["headSuck"] then
+        buttonInstances["headSuck"].Text = "بانق بالراس"
+        buttonInstances["headSuck"].BackgroundColor3 = Color3.new(0,0,0)
+    end
+end
+
+local function toggleHeadSuck()
+    if headSucking then
+        stopHeadSuck()
+    else
+        local victim = requireVictim()
+        if victim then startHeadSuck(victim) end
+    end
+end
+
+-----------------[ Skid Fling بسيط ]-----------------
+
+local function SkidFling(targetPlayer)
+    if not targetPlayer or IsFlinging then return end
+    IsFlinging = true
+
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not (char and hum and root) then
+        IsFlinging = false
+        return
+    end
+
+    local tChar = targetPlayer.Character
+    if not tChar then IsFlinging = false return end
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+        or tChar:FindFirstChild("Torso")
+        or tChar:FindFirstChild("UpperTorso")
+    if not tRoot then IsFlinging = false return end
+
+    local oldPos = root.CFrame
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Velocity = Vector3.new(9e8,9e8,9e8)
+    bv.Parent = root
+
+    local angle = 0
+    skidFlingConnection = RunService.Heartbeat:Connect(function()
+        if not skidFlingActive or not targetPlayer.Character or hum.Health <= 0 then
+            return
+        end
+        angle = angle + 10
+        root.CFrame = (tRoot.CFrame * CFrame.Angles(0, math.rad(angle), 0)) * CFrame.new(0,0,5)
+        root.Velocity = Vector3.new(9e7,9e7,9e7)
+        root.RotVelocity = Vector3.new(9e7,9e7,9e7)
+    end)
+
+    task.delay(2, function()
+        if bv then bv:Destroy() end
+        if skidFlingConnection then
+            skidFlingConnection:Disconnect()
+            skidFlingConnection = nil
+        end
+        if char and hum and root then
+            root.CFrame = oldPos * CFrame.new(SIMPLE_OFFSET)
+            root.Velocity = Vector3.new()
+            root.RotVelocity = Vector3.new()
+        end
+        IsFlinging = false
+    end)
+end
+
+local function toggleSkidFling()
+    if skidFlingActive then
+        skidFlingActive = false
+        if skidFlingConnection then
+            skidFlingConnection:Disconnect()
+            skidFlingConnection = nil
+        end
+        if buttonInstances["skidFling"] then
+            buttonInstances["skidFling"].Text = "بانق تشويش"
+            buttonInstances["skidFling"].BackgroundColor3 = Color3.new(0,0,0)
+        end
+    else
+        local victim = requireVictim()
+        if not victim then return end
+        skidFlingActive = true
+        if buttonInstances["skidFling"] then
+            buttonInstances["skidFling"].Text = "بانق تشويش ✅"
+            buttonInstances["skidFling"].BackgroundColor3 = Color3.new(0,0.5,0)
+        end
+        SkidFling(victim)
+    end
+end
+
+-----------------[ سبام ]-----------------
+
+local function sendSpam1()
+    local Events = ReplicatedStorage:FindFirstChild("Events")
+    if not Events then return end
+    local SendMessage = Events:FindFirstChild("SendMessage")
+    if not SendMessage then return end
+    pcall(function()
+        SendMessage:FireServer(string.rep("?", 200))
+    end)
+end
+
+local function sendSpam2()
+    local Events = ReplicatedStorage:FindFirstChild("Events")
+    if not Events then return end
+    local SendMessage = Events:FindFirstChild("SendMessage")
+    if not SendMessage then return end
+    pcall(function()
+        SendMessage:FireServer(string.rep("F", 200))
+    end)
+end
+
+local function sendSpam3()
+    executeCommand(".re .hr")
+end
+
+local function sendSpam4()
+    local Events = ReplicatedStorage:FindFirstChild("Events")
+    if not Events then return end
+    local SendMessage = Events:FindFirstChild("SendMessage")
+    if not SendMessage then return end
+    pcall(function()
+        SendMessage:FireServer("سبام عربي مطوّل 😂😂😂😂😂")
+    end)
+end
+
+local function sendSpam5()
+    local Events = ReplicatedStorage:FindFirstChild("Events")
+    if not Events then return end
+    local SendMessage = Events:FindFirstChild("SendMessage")
+    if not SendMessage then return end
+    pcall(function()
+        SendMessage:FireServer("هههههههههههههههههههههههههههههههههههههههههههههههههههههههههههههههههههههه")
+    end)
+end
+
+local function toggleAutoSpam(spamType, func)
+    if autoSpamActive[spamType] then
+        autoSpamActive[spamType] = false
+        autoSpamThreads[spamType] = nil
+        if buttonInstances[spamType] then
+            buttonInstances[spamType].Text = (buttonInstances[spamType].Text:gsub(" ✅",""))
+            buttonInstances[spamType].BackgroundColor3 = Color3.new(0,0,0)
+        end
+    else
+        autoSpamActive[spamType] = true
+        if buttonInstances[spamType] then
+            buttonInstances[spamType].Text = buttonInstances[spamType].Text.." ✅"
+            buttonInstances[spamType].BackgroundColor3 = Color3.new(0,0.5,0)
+        end
+        autoSpamThreads[spamType] = coroutine.wrap(function()
+            while autoSpamActive[spamType] do
+                func()
+                task.wait(0.03)
+            end
+        end)()
+    end
+end
+
+-----------------[ حماية (مضاد نسخ) ]-----------------
+
+local function toggleAntiCopy()
+    antiCopyActive = not antiCopyActive
+    if antiCopyActive then
+        if buttonInstances["antiCopy"] then
+            buttonInstances["antiCopy"].Text = "مضاد نسخ ✅"
+            buttonInstances["antiCopy"].BackgroundColor3 = Color3.new(0,0.5,0)
+        end
+        antiCopyThread = coroutine.wrap(function()
+            while antiCopyActive do
+                executeCommand(";unwormify me  ;undog me  ;unneon me  ;unchar me ")
+                task.wait(5)
+            end
+        end)()
+    else
+        antiCopyThread = nil
+        if buttonInstances["antiCopy"] then
+            buttonInstances["antiCopy"].Text = "مضاد نسخ"
+            buttonInstances["antiCopy"].BackgroundColor3 = Color3.new(0,0,0)
+        end
+    end
+end
+
+local function toggleAntiCopyNoMod()
+    antiCopyNoModActive = not antiCopyNoModActive
+    if antiCopyNoModActive then
+        if buttonInstances["antiCopyNoMod"] then
+            buttonInstances["antiCopyNoMod"].Text = "مضاد نسخ بدون Mod ✅"
+            buttonInstances["antiCopyNoMod"].BackgroundColor3 = Color3.new(0,0.5,0)
+        end
+        antiCopyNoModThread = coroutine.wrap(function()
+            while antiCopyNoModActive do
+                executeCommand(";char me ")
+                task.wait(2)
+            end
+        end)()
+    else
+        antiCopyNoModThread = nil
+        if buttonInstances["antiCopyNoMod"] then
+            buttonInstances["antiCopyNoMod"].Text = "مضاد نسخ بدون Mod"
+            buttonInstances["antiCopyNoMod"].BackgroundColor3 = Color3.new(0,0,0)
+        end
+    end
+end
+
+-----------------[ واجهة المستخدم ]-----------------
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "LIWA_VictimPanel"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = CoreGui
+
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Size = UDim2.new(0, 40, 0, 40)
+ToggleButton.Position = UDim2.new(0, 20, 0, 20)
+ToggleButton.BackgroundColor3 = Color3.new(0, 0, 0)
+ToggleButton.BorderSizePixel = 2
+ToggleButton.BorderColor3 = Color3.new(1,1,1)
+ToggleButton.TextColor3 = Color3.new(1,1,1)
+ToggleButton.Text = "W"
+ToggleButton.TextSize = 18
+ToggleButton.Font = Enum.Font.GothamBlack
+ToggleButton.Parent = ScreenGui
+
+local tCorner = Instance.new("UICorner")
+tCorner.CornerRadius = UDim.new(1,0)
+tCorner.Parent = ToggleButton
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 420, 0, 500)
+MainFrame.Position = UDim2.new(0.5, -210, 0.5, -250)
+MainFrame.BackgroundColor3 = Color3.new(0,0,0)
+MainFrame.BorderSizePixel = 3
+MainFrame.BorderColor3 = Color3.new(1,1,1)
+MainFrame.Visible = false
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0,12)
+mainCorner.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1,0,0,50)
+TitleLabel.Position = UDim2.new(0,0,0,0)
+TitleLabel.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+TitleLabel.BorderSizePixel = 3
+TitleLabel.BorderColor3 = Color3.new(1,1,1)
+TitleLabel.TextColor3 = Color3.new(1,1,1)
+TitleLabel.Text = "~ LIWA Victim Panel ~"
+TitleLabel.Font = Enum.Font.GothamBlack
+TitleLabel.TextSize = 20
+TitleLabel.Parent = MainFrame
+
+local tlCorner = Instance.new("UICorner")
+tlCorner.CornerRadius = UDim.new(0,8)
+tlCorner.Parent = TitleLabel
+
+-- محتوى اليسار
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, -140, 1, -60)
+ContentFrame.Position = UDim2.new(0,10,0,55)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+-- قائمة الأقسام على اليمين
+local CategoriesFrame = Instance.new("Frame")
+CategoriesFrame.Size = UDim2.new(0, 120, 1, -60)
+CategoriesFrame.Position = UDim2.new(1, -130, 0, 55)
+CategoriesFrame.BackgroundColor3 = Color3.new(0.08,0.08,0.08)
+CategoriesFrame.BorderSizePixel = 2
+CategoriesFrame.BorderColor3 = Color3.new(1,1,1)
+CategoriesFrame.Parent = MainFrame
+
+local catCorner = Instance.new("UICorner")
+catCorner.CornerRadius = UDim.new(0,8)
+catCorner.Parent = CategoriesFrame
+
+local catLayout = Instance.new("UIListLayout")
+catLayout.Padding = UDim.new(0,2) -- تم تصغير البادينق عشان كل الأقسام تدخل
+catLayout.FillDirection = Enum.FillDirection.Vertical
+catLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+catLayout.SortOrder = Enum.SortOrder.LayoutOrder
+catLayout.Parent = CategoriesFrame
+
+local buttonCategory = {}
+local categoryButtons = {}
+local currentCategory = "control"
+
+-- الأقسام
+local categories = {
+    {id="control",    label="التحكم"},
+    {id="help",       label="المساعدة"},
+    {id="bang",       label="البانق"},
+    {id="trolling",   label="التخريب"},
+    {id="copy",       label="النسخ"},
+    {id="skins",      label="السكنات"},
+    {id="colors",     label="الألوان"},
+    {id="emotes",     label="الرقص"},
+    {id="effects",    label="المؤثرات"},
+    {id="clothes",    label="الملابس"},
+    {id="protection", label="الحماية"},
+    {id="spam",       label="السبام"},
+    {id="titles",     label="التايتل"},
+}
+
+local explicitCategoryOverrides = {
+    -- مساعدة (سبيد/فلاي)
+    fly60   = "help",
+    fly120  = "help",
+    fly220  = "help",
+    unfly   = "help",
+    speed60 = "help",
+    speed120= "help",
+    speed220= "help",
+
+    -- سبام
+    spam1      = "spam",
+    autoSpam1  = "spam",
+    spam2      = "spam",
+    autoSpam2  = "spam",
+    spam3      = "spam",
+    autoSpam3  = "spam",
+    spam4      = "spam",
+    autoSpam4  = "spam",
+    spam5      = "spam",
+    autoSpam5  = "spam",
+
+    -- حماية
+    antiCopy      = "protection",
+    antiCopyNoMod = "protection",
+
+    -- تحكم
+    spectate = "control",
+    teleport = "control",
+    reset    = "control",
+    to       = "control",
+    view     = "control",
+    unview   = "control",
+}
+
+local function defaultCategoryForOrder(order)
+    if order <= 6 then return "control" end
+    if order <= 8 then return "bang" end
+    if order <= 36 then return "trolling" end
+    if order <= 52 then return "skins" end
+    if order <= 56 then return "clothes" end
+    if order <= 67 then return "colors" end
+    if order <= 72 then return "emotes" end
+    if order <= 90 then return "effects" end
+    if order <= 126 then return "copy" end
+    return "trolling"
+end
+
+local function updateCategoryButtons()
+    for id, btn in pairs(categoryButtons) do
+        if id == currentCategory then
+            btn.BackgroundColor3 = Color3.new(0,0.5,0)
+        else
+            btn.BackgroundColor3 = Color3.new(0.08,0.08,0.08)
+        end
+    end
+end
+
+local function updateButtonsVisibility()
+    local titlesMode = (currentCategory == "titles")
+    if ScrollFrame then ScrollFrame.Visible = not titlesMode end
+    if TitlesFrame then TitlesFrame.Visible = titlesMode end
+
+    for typeName, btn in pairs(buttonInstances) do
+        local cat = buttonCategory[typeName] or "control"
+        btn.Visible = (not titlesMode) and (cat == currentCategory)
+    end
+end
+
+local function createCategoryButtons()
+    for i, cat in ipairs(categories) do
+        local btn = Instance.new("TextButton")
+        btn.Name = cat.id
+        btn.Size = UDim2.new(1, -10, 0, 24) -- تصغير ارتفاع زر القسم
+        btn.BackgroundColor3 = Color3.new(0.08,0.08,0.08)
+        btn.BorderSizePixel = 2
+        btn.BorderColor3 = Color3.new(1,1,1)
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Text = cat.label
+        btn.TextSize = 12
+        btn.Font = Enum.Font.GothamBlack
+        btn.LayoutOrder = i
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0,6)
+        c.Parent = btn
+
+        btn.Parent = CategoriesFrame
+
+        btn.MouseButton1Click:Connect(function()
+            currentCategory = cat.id
+            updateCategoryButtons()
+            updateButtonsVisibility()
+        end)
+
+        categoryButtons[cat.id] = btn
+    end
+    updateCategoryButtons()
+end
+
+-----------------[ معلومات الضحية ]-----------------
+
+local VictimInfo = Instance.new("Frame")
+VictimInfo.Size = UDim2.new(1,0,0,150)
+VictimInfo.Position = UDim2.new(0,0,0,0)
+VictimInfo.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+VictimInfo.BorderSizePixel = 3
+VictimInfo.BorderColor3 = Color3.new(1,1,1)
+VictimInfo.Parent = ContentFrame
+
+local viCorner = Instance.new("UICorner")
+viCorner.CornerRadius = UDim.new(0,8)
+viCorner.Parent = VictimInfo
+
+local VictimAvatar = Instance.new("ImageLabel")
+VictimAvatar.Size = UDim2.new(0,80,0,80)
+VictimAvatar.Position = UDim2.new(0,10,0,10)
+VictimAvatar.BackgroundColor3 = Color3.new(1,1,1)
+VictimAvatar.BorderSizePixel = 2
+VictimAvatar.BorderColor3 = Color3.new(1,1,1)
+VictimAvatar.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+VictimAvatar.Parent = VictimInfo
+
+local vaCorner = Instance.new("UICorner")
+vaCorner.CornerRadius = UDim.new(0,6)
+vaCorner.Parent = VictimAvatar
+
+local VictimNameLabel = Instance.new("TextLabel")
+VictimNameLabel.Size = UDim2.new(0,350,0,25)
+VictimNameLabel.Position = UDim2.new(0,100,0,10)
+VictimNameLabel.BackgroundTransparency = 1
+VictimNameLabel.TextColor3 = Color3.new(1,1,1)
+VictimNameLabel.Font = Enum.Font.GothamBlack
+VictimNameLabel.TextSize = 16
+VictimNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+VictimNameLabel.Text = "لا يوجد ضحية محددة"
+VictimNameLabel.Parent = VictimInfo
+
+local VictimInfoText = Instance.new("TextLabel")
+VictimInfoText.Size = UDim2.new(0,350,0,100)
+VictimInfoText.Position = UDim2.new(0,100,0,35)
+VictimInfoText.BackgroundTransparency = 1
+VictimInfoText.TextColor3 = Color3.new(1,1,1)
+VictimInfoText.Font = Enum.Font.GothamBold
+VictimInfoText.TextSize = 12
+VictimInfoText.TextXAlignment = Enum.TextXAlignment.Left
+VictimInfoText.TextYAlignment = Enum.TextYAlignment.Top
+VictimInfoText.TextWrapped = true
+VictimInfoText.Text = "اللقب: -\nعمر الحساب: -\nID: -\nالأدوات: -"
+VictimInfoText.Parent = VictimInfo
+
+local InputFrame = Instance.new("Frame")
+InputFrame.Size = UDim2.new(1,0,0,40)
+InputFrame.Position = UDim2.new(0,0,0,160)
+InputFrame.BackgroundTransparency = 1
+InputFrame.Parent = ContentFrame
+
+local VictimInput = Instance.new("TextBox")
+VictimInput.Size = UDim2.new(0.7,0,1,0)
+VictimInput.Position = UDim2.new(0,0,0,0)
+VictimInput.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+VictimInput.BorderSizePixel = 3
+VictimInput.BorderColor3 = Color3.new(1,1,1)
+VictimInput.TextColor3 = Color3.new(1,1,1)
+VictimInput.PlaceholderText = "أدخل اسم المستخدم (حرفين على الأقل)"
+VictimInput.PlaceholderColor3 = Color3.new(0.7,0.7,0.7)
+VictimInput.Text = ""
+VictimInput.Font = Enum.Font.GothamBold
+VictimInput.TextSize = 14
+VictimInput.Parent = InputFrame
+
+local viCorner2 = Instance.new("UICorner")
+viCorner2.CornerRadius = UDim.new(0,6)
+viCorner2.Parent = VictimInput
+
+local SetVictimButton = Instance.new("TextButton")
+SetVictimButton.Size = UDim2.new(0.28,0,1,0)
+SetVictimButton.Position = UDim2.new(0.72,0,0,0)
+SetVictimButton.BackgroundColor3 = Color3.new(0,0,0)
+SetVictimButton.BorderSizePixel = 3
+SetVictimButton.BorderColor3 = Color3.new(1,1,1)
+SetVictimButton.TextColor3 = Color3.new(1,1,1)
+SetVictimButton.Text = "تحديد الضحية"
+SetVictimButton.Font = Enum.Font.GothamBlack
+SetVictimButton.TextSize = 14
+SetVictimButton.Parent = InputFrame
+
+local svCorner = Instance.new("UICorner")
+svCorner.CornerRadius = UDim.new(0,6)
+svCorner.Parent = SetVictimButton
+
+-- سكروول للأزرار
+ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1,0,1,-210)
+ScrollFrame.Position = UDim2.new(0,0,0,210)
+ScrollFrame.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+ScrollFrame.BorderSizePixel = 3
+ScrollFrame.BorderColor3 = Color3.new(1,1,1)
+ScrollFrame.ScrollBarThickness = 8
+ScrollFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+ScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ScrollFrame.CanvasSize = UDim2.new(0,0,0,0)
+ScrollFrame.Parent = ContentFrame
+
+local sfCorner = Instance.new("UICorner")
+sfCorner.CornerRadius = UDim.new(0,8)
+sfCorner.Parent = ScrollFrame
+
+local ButtonGrid = Instance.new("UIGridLayout")
+ButtonGrid.CellPadding = UDim2.new(0,5,0,5)
+ButtonGrid.CellSize = UDim2.new(0,110,0,35)
+ButtonGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ButtonGrid.SortOrder = Enum.SortOrder.LayoutOrder
+ButtonGrid.Parent = ScrollFrame
+
+-- قسم التايتل
+TitlesFrame = Instance.new("Frame")
+TitlesFrame.Size = ScrollFrame.Size
+TitlesFrame.Position = ScrollFrame.Position
+TitlesFrame.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+TitlesFrame.BorderSizePixel = 3
+TitlesFrame.BorderColor3 = Color3.new(1,1,1)
+TitlesFrame.Visible = false
+TitlesFrame.Parent = ContentFrame
+
+local tfCorner = Instance.new("UICorner")
+tfCorner.CornerRadius = UDim.new(0,8)
+tfCorner.Parent = TitlesFrame
+
+local TitleInput = Instance.new("TextBox")
+TitleInput.Size = UDim2.new(0.9,0,0,40)
+TitleInput.Position = UDim2.new(0.05,0,0,20)
+TitleInput.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+TitleInput.BorderSizePixel = 3
+TitleInput.BorderColor3 = Color3.new(1,1,1)
+TitleInput.TextColor3 = Color3.new(1,1,1)
+TitleInput.PlaceholderText = "اكتب التايتل هنا..."
+TitleInput.PlaceholderColor3 = Color3.new(0.7,0.7,0.7)
+TitleInput.Text = ""
+TitleInput.Font = Enum.Font.GothamBold
+TitleInput.TextSize = 14
+TitleInput.ClearTextOnFocus = false
+TitleInput.Parent = TitlesFrame
+
+local tiCorner = Instance.new("UICorner")
+tiCorner.CornerRadius = UDim.new(0,6)
+tiCorner.Parent = TitleInput
+
+local ApplyTitleButton = Instance.new("TextButton")
+ApplyTitleButton.Size = UDim2.new(0.4,0,0,35)
+ApplyTitleButton.Position = UDim2.new(0.05,0,0,80)
+ApplyTitleButton.BackgroundColor3 = Color3.new(0,0,0)
+ApplyTitleButton.BorderSizePixel = 3
+ApplyTitleButton.BorderColor3 = Color3.new(1,1,1)
+ApplyTitleButton.TextColor3 = Color3.new(1,1,1)
+ApplyTitleButton.Text = "تطبيق"
+ApplyTitleButton.Font = Enum.Font.GothamBlack
+ApplyTitleButton.TextSize = 14
+ApplyTitleButton.Parent = TitlesFrame
+
+local atCorner = Instance.new("UICorner")
+atCorner.CornerRadius = UDim.new(0,6)
+atCorner.Parent = ApplyTitleButton
+
+local AutoTitleButton = Instance.new("TextButton")
+AutoTitleButton.Size = UDim2.new(0.4,0,0,35)
+AutoTitleButton.Position = UDim2.new(0.55,0,0,80)
+AutoTitleButton.BackgroundColor3 = Color3.new(0,0,0)
+AutoTitleButton.BorderSizePixel = 3
+AutoTitleButton.BorderColor3 = Color3.new(1,1,1)
+AutoTitleButton.TextColor3 = Color3.new(1,1,1)
+AutoTitleButton.Text = "تلقائي"
+AutoTitleButton.Font = Enum.Font.GothamBlack
+AutoTitleButton.TextSize = 14
+AutoTitleButton.Parent = TitlesFrame
+
+local auCorner = Instance.new("UICorner")
+auCorner.CornerRadius = UDim.new(0,6)
+auCorner.Parent = AutoTitleButton
+
+local TitleInfo = Instance.new("TextLabel")
+TitleInfo.Size = UDim2.new(0.9,0,0,60)
+TitleInfo.Position = UDim2.new(0.05,0,0,130)
+TitleInfo.BackgroundTransparency = 1
+TitleInfo.TextColor3 = Color3.new(1,1,1)
+TitleInfo.Font = Enum.Font.GothamBold
+TitleInfo.TextSize = 12
+TitleInfo.TextWrapped = true
+TitleInfo.Text = "💡 يطبق التايتل على الضحية الحالية باستخدام ;titlepk.\nلو تركت الخانة فاضية يستخدم التايتل اللي تكتبه هنا."
+TitleInfo.Parent = TitlesFrame
+
+local function applyTitleOnce()
+    local victim = requireVictim()
+    if not victim then return end
+    local txt = TitleInput.Text
+    if txt == "" then
+        txt = defaultTitleText
+    end
+    executeCommand(";titlepk "..victim.Name.." "..txt)
+    showNotification("✅ تم تطبيق التايتل على "..victim.Name)
+end
+
+local function toggleAutoTitle()
+    autoTitleActive = not autoTitleActive
+    if autoTitleActive then
+        AutoTitleButton.Text = "تلقائي ✅"
+        AutoTitleButton.BackgroundColor3 = Color3.new(0,0.5,0)
+        autoTitleThread = coroutine.wrap(function()
+            while autoTitleActive do
+                local victim = requireVictim()
+                if victim then
+                    local txt = TitleInput.Text
+                    if txt == "" then txt = defaultTitleText end
+                    executeCommand(";titlepk "..victim.Name.." "..txt)
+                end
+                task.wait(3)
+            end
+        end)()
+    else
+        AutoTitleButton.Text = "تلقائي"
+        AutoTitleButton.BackgroundColor3 = Color3.new(0,0,0)
+        autoTitleThread = nil
+    end
+end
+
+ApplyTitleButton.MouseButton1Click:Connect(applyTitleOnce)
+AutoTitleButton.MouseButton1Click:Connect(toggleAutoTitle)
+
+-----------------[ إنشاء أزرار الضحية ]-----------------
+
+local function createButton(name, layoutOrder)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Size = UDim2.new(0,110,0,35)
+    btn.BackgroundColor3 = Color3.new(0,0,0)
+    btn.BorderSizePixel = 3
+    btn.BorderColor3 = Color3.new(1,1,1)
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Text = name
+    btn.Font = Enum.Font.GothamBlack
+    btn.TextSize = 11
+    btn.LayoutOrder = layoutOrder
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0,6)
+    c.Parent = btn
+
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out), {
+            BackgroundColor3 = Color3.new(0.2,0.2,0.2),
+            Size = UDim2.new(0,115,0,38)
+        }):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out), {
+            BackgroundColor3 = Color3.new(0,0,0),
+            Size = UDim2.new(0,110,0,35)
+        }):Play()
+    end)
+
+    btn.Parent = ScrollFrame
+    return btn
+end
+
+-- ترتيب الأزرار + الأقسام
+local victimButtons = {
+    {name="مشاهدة",type="spectate",order=1},
+    {name="انتقال",type="teleport",order=2},
+    {name="اعاده تعيين",type="reset",order=3},
+    {name="to",type="to",order=4},
+    {name="view",type="view",order=5},
+    {name="unview",type="unview",order=6},
+
+    {name="بانق",type="bang",order=7},
+    {name="بانق من الامام",type="bangFront",order=8},
+    {name="بانق بالراس",type="headSuck",order=9},
+    {name="بانق تشويش",type="skidFling",order=10},
+
+    {name="اعاده تعيين تلقائي",type="autoReset",order=11},
+    {name="ايقاف الجميع",type="stopAll",order=12},
+    {name="ايقاف الجميع تلقائي",type="autoStopAll",order=13},
+    {name="معوق",type="cripple",order=14},
+    {name="معوق تلقائي",type="autoCripple",order=15},
+
+    {name="تطيير في الجو",type="flyInAir",order=16},
+    {name="تطيير في الجو تلقائي",type="autoFlyInAir",order=17},
+    {name="تعليق F",type="suspendF",order=18},
+    {name="فك تعليق F",type="unsuspendF",order=19},
+    {name="تعليق F تلقائي",type="autoSuspendF",order=20},
+
+    {name="تعليق القفز",type="suspendJump",order=21},
+    {name="فك تعليق القفز",type="unsuspendJump",order=22},
+    {name="قفز تلقائي",type="autoJump",order=23},
+    {name="تعليق الضحيه",type="suspendVictim",order=24},
+    {name="فك تعليق الضحيه",type="unsuspendVictim",order=25},
+    {name="تعليق الطيران",type="suspendFly",order=26},
+    {name="فك تعليق الطيران",type="unsuspendFly",order=27},
+
+    {name="طيران 60",type="fly60",order=28},
+    {name="طيران 120",type="fly120",order=29},
+    {name="طيران 220",type="fly220",order=30},
+    {name="ايقاف الطيران",type="unfly",order=31},
+    {name="سرعه 60",type="speed60",order=32},
+    {name="سرعه 120",type="speed120",order=33},
+    {name="سرعه 220",type="speed220",order=34},
+
+    {name="كلب",type="dog",order=35},
+    {name="كلب تلقائي",type="autoDog",order=36},
+    {name="دوده",type="worm",order=37},
+    {name="منور",type="neon",order=38},
+    {name="ذهب",type="gold",order=39},
+    {name="شفاف",type="glass",order=40},
+    {name="اخفاء",type="ref",order=41},
+
+    {name="حجم طبيعي",type="size1",order=42},
+    {name="حجم متوسط",type="size2",order=43},
+    {name="حجم كبير",type="size3",order=44},
+
+    {name="سكن تخريب",type="charCrazy",order=45},
+    {name="سكن Miri",type="charMiri",order=46},
+    {name="char",type="char",order=47},
+    {name="unchar",type="unchar",order=48},
+
+    {name="تفصيخ تيشرت",type="shirt",order=49},
+    {name="تفصيخ كامل",type="pants",order=50},
+    {name="فك الهيدلست",type="head",order=51},
+
+    {name="اسود",type="black",order=52},
+    {name="ابيض",type="white",order=53},
+    {name="وردي",type="pink",order=54},
+    {name="بنفسجي",type="purple",order=55},
+    {name="ازرق",type="blue",order=56},
+    {name="اصفر",type="yellow",order=57},
+    {name="احمر",type="red",order=58},
+    {name="اخضر",type="green",order=59},
+    {name="ايقاف اللون",type="uncolour",order=60},
+
+    {name="رقصه 1",type="fryDance",order=61},
+    {name="رقصه 2",type="takethel",order=62},
+    {name="فار يرقص",type="ratDance",order=63},
+    {name="جلوس 2",type="cuteSit",order=64},
+    {name="ميت",type="fakeDeath",order=65},
+
+    {name="دب",type="fat",order=66},
+    {name="نحيف",type="thin",order=67},
+    {name="مربع",type="hide",order=68},
+    {name="معضل",type="buffify",order=69},
+    {name="دبابه حربيه",type="tank",order=70},
+    {name="هليكوبتر",type="helicopter",order=71},
+    {name="طياره",type="plane",order=72},
+    {name="سياره",type="car",order=73},
+    {name="صندوق",type="box",order=74},
+
+    {name="عشوائي",type="emote",order=75},
+    {name="ارتجاج",type="phase",order=76},
+    {name="دخان",type="smoke",order=77},
+    {name="ايقاف الدخان",type="unsmoke",order=78},
+    {name="نار",type="fire",order=79},
+    {name="ايقاف النار",type="unfire",order=80},
+    {name="اختفاء",type="shine",order=81},
+    {name="شبح",type="ghost",order=82},
+
+    {name="اورا تلقائي",type="autoAura",order=83},
+
+    -- نسخ 1-20
+    {name="نسخ 1",type="copy1",order=90},
+    {name="نسخ 2",type="copy2",order=91},
+    {name="نسخ 3",type="copy3",order=92},
+    {name="نسخ 4",type="copy4",order=93},
+    {name="نسخ 5",type="copy5",order=94},
+    {name="نسخ 6",type="copy6",order=95},
+    {name="نسخ 7",type="copy7",order=96},
+    {name="نسخ 8",type="copy8",order=97},
+    {name="نسخ 9",type="copy9",order=98},
+    {name="نسخ 10",type="copy10",order=99},
+    {name="نسخ 11",type="copy11",order=100},
+    {name="نسخ 12",type="copy12",order=101},
+    {name="نسخ 13",type="copy13",order=102},
+    {name="نسخ 14",type="copy14",order=103},
+    {name="نسخ 15",type="copy15",order=104},
+    {name="نسخ 16",type="copy16",order=105},
+    {name="نسخ 17",type="copy17",order=106},
+    {name="نسخ 18",type="copy18",order=107},
+    {name="نسخ 19",type="copy19",order=108},
+    {name="نسخ 20",type="copy20",order=109},
+
+    {name="نسخ تلقائي 1",type="autoCopy1",order=110},
+    {name="نسخ تلقائي 2",type="autoCopy2",order=111},
+    {name="نسخ تلقائي 3",type="autoCopy3",order=112},
+    {name="نسخ تلقائي 4",type="autoCopy4",order=113},
+    {name="نسخ تلقائي 5",type="autoCopy5",order=114},
+    {name="نسخ تلقائي 6",type="autoCopy6",order=115},
+
+    {name="اخفاء 1",type="hideCombo1",order=116},
+    {name="اخفاء 2",type="hideCombo2",order=117},
+    {name="كومبو تلقائي",type="autoHideCombo",order=118},
+
+    -- سبام
+    {name="سبام 1",type="spam1",order=120},
+    {name="سبام تلقائي 1",type="autoSpam1",order=121},
+    {name="سبام 2",type="spam2",order=122},
+    {name="سبام تلقائي 2",type="autoSpam2",order=123},
+    {name="سبام 3",type="spam3",order=124},
+    {name="سبام تلقائي 3",type="autoSpam3",order=125},
+    {name="سبام 4",type="spam4",order=126},
+    {name="سبام تلقائي 4",type="autoSpam4",order=127},
+    {name="سبام 5",type="spam5",order=128},
+    {name="سبام تلقائي 5",type="autoSpam5",order=129},
+
+    -- حماية
+    {name="مضاد نسخ",type="antiCopy",order=130},
+    {name="مضاد نسخ بدون Mod",type="antiCopyNoMod",order=131},
+}
+
+for _, info in ipairs(victimButtons) do
+    local btn = createButton(info.name, info.order)
+    buttonInstances[info.type] = btn
+    local cat = explicitCategoryOverrides[info.type] or defaultCategoryForOrder(info.order)
+    buttonCategory[info.type] = cat
+end
+
+createCategoryButtons()
+updateButtonsVisibility()
+
+-----------------[ تحديث معلومات الضحية ]-----------------
+
+local function updateVictimInfo(victim)
+    if victim then
+        currentVictimName = victim.Name
+        VictimNameLabel.Text = "الضحية: "..victim.Name
+
+        pcall(function()
+            VictimAvatar.Image = "https://www.roblox.com/headshot-thumbnail/image?userId="..
+                victim.UserId.."&width=150&height=150&format=png"
+        end)
+
+        local y,m,d = getAccountAgeFromPlayer(victim)
+        local tools = getVictimTools(victim)
+        local toolsText = (#tools>0 and table.concat(tools,", ") or "لا يوجد أدوات")
+
+        VictimInfoText.Text =
+            "اللقب: "..victim.DisplayName..
+            "\nعمر الحساب: "..y.." سنة, "..m.." شهر, "..d.." يوم"..
+            "\nID: "..victim.UserId..
+            "\nالأدوات: "..toolsText
+
+        showNotification("✅ تم تحديد الضحية: "..victim.Name)
+    else
+        currentVictimName = nil
+        VictimNameLabel.Text = "لا يوجد ضحية محددة"
+        VictimAvatar.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+        VictimInfoText.Text = "اللقب: -\nعمر الحساب: -\nID: -\nالأدوات: -"
+    end
+end
+
+SetVictimButton.MouseButton1Click:Connect(function()
+    local username = VictimInput.Text
+    if username == "" then
+        showNotification("❌ أدخل اسم المستخدم")
+        return
+    end
+    if #username < 2 then
+        showNotification("❌ أدخل حرفين على الأقل")
+        return
+    end
+
+    for _, protectedName in ipairs(protectedUsernames) do
+        if username:lower() == protectedName:lower() then
+            showNotification("❌ هذا المستخدم محمي")
+            return
+        end
+    end
+
+    local victim = findPlayerByPartialName(username)
+    if not victim then
+        showNotification("❌ لم يتم العثور على "..username)
+        return
+    end
+
+    for _, protectedName in ipairs(protectedUsernames) do
+        if victim.Name:lower() == protectedName:lower() then
+            showNotification("❌ هذا المستخدم محمي")
+            return
+        end
+    end
+
+    updateVictimInfo(victim)
+    VictimInput.Text = ""
 end)
 
-UIS.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - dragStart
-		main.Position = UDim2.new(
-			startPos.X.Scale,
-			startPos.X.Offset + delta.X,
-			startPos.Y.Scale,
-			startPos.Y.Offset + delta.Y
-		)
-	end
-end)
+-----------------[ أداة استهداف بالنقر على اللاعبين ]-----------------
 
--- الهدف
-local targetBox = Instance.new("TextBox")
-targetBox.Size = UDim2.new(0, 120, 0, 28)
-targetBox.Position = UDim2.new(0, 10, 0, 34)
-targetBox.PlaceholderText = "أول 3 حروف (mis)"
-targetBox.BackgroundColor3 = Color3.fromRGB(34,40,60)
-targetBox.TextColor3 = Color3.fromRGB(240,240,240)
-targetBox.ClearTextOnFocus = false
-targetBox.Font = Enum.Font.Gotham
-targetBox.TextSize = 13
-targetBox.Parent = main
-addCorner(targetBox, 6)
-addStroke(targetBox, 1, Color3.fromRGB(0,0,0))
+local targetingEnabled = false
+local mouse = player:GetMouse()
 
--- زر العين (VIEW)
-local viewBtn = Instance.new("TextButton")
-viewBtn.Name = "ViewButton"
-viewBtn.Size = UDim2.fromOffset(32, 28)
-viewBtn.Position = UDim2.new(0, 140, 0, 34)
-viewBtn.BackgroundColor3 = Color3.fromRGB(45,52,78)
-viewBtn.TextColor3 = Color3.fromRGB(255,255,255)
-viewBtn.Font = Enum.Font.GothamBold
-viewBtn.TextSize = 16
-viewBtn.Text = "👁"
-viewBtn.Parent = main
-addCorner(viewBtn, 6)
-addStroke(viewBtn, 1, Color3.fromRGB(0,0,0))
+local TargetButton = Instance.new("TextButton")
+TargetButton.Name = "ClickTargetButton"
+TargetButton.Size = UDim2.new(0, 40, 0, 40)
+TargetButton.AnchorPoint = Vector2.new(1,1)
+TargetButton.Position = UDim2.new(1, -20, 1, -20) -- يمين تحت مع مارجن 20
+TargetButton.BackgroundColor3 = Color3.new(0,0,0)
+TargetButton.BorderSizePixel = 2
+TargetButton.BorderColor3 = Color3.new(1,1,1)
+TargetButton.TextColor3 = Color3.new(1,1,1)
+TargetButton.Text = "☝🏻"
+TargetButton.TextSize = 24
+TargetButton.Font = Enum.Font.GothamBlack
+TargetButton.Parent = ScreenGui
 
--- زر العين + X (UNVIEW)
-local unviewBtn = Instance.new("TextButton")
-unviewBtn.Name = "UnviewButton"
-unviewBtn.Size = UDim2.fromOffset(32, 28)
-unviewBtn.Position = UDim2.new(0, 140, 0, 66) -- تحت زر الفيو
-unviewBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 60)
-unviewBtn.TextColor3 = Color3.fromRGB(255,255,255)
-unviewBtn.Font = Enum.Font.GothamBold
-unviewBtn.TextSize = 14
-unviewBtn.Text = "👁✕"
-unviewBtn.Parent = main
-addCorner(unviewBtn, 6)
-addStroke(unviewBtn, 1, Color3.fromRGB(0,0,0))
+local tbCorner = Instance.new("UICorner")
+tbCorner.CornerRadius = UDim.new(1,0)
+tbCorner.Parent = TargetButton
 
-local viewState = false        -- هل حالياً عامل view؟
-local viewTarget: string? = nil
-
-local function updateViewVisual()
-	if viewState then
-		viewBtn.BackgroundColor3 = Color3.fromRGB(60,140,90)
-		viewBtn.Text = "👁‍🗨"
-	else
-		viewBtn.BackgroundColor3 = Color3.fromRGB(45,52,78)
-		viewBtn.Text = "👁"
-	end
+local function updateTargetButtonVisual()
+    if targetingEnabled then
+        TargetButton.BackgroundColor3 = Color3.new(0,0.5,0)
+    else
+        TargetButton.BackgroundColor3 = Color3.new(0,0,0)
+    end
 end
 
--- ========== كرت معلومات اللاعب (مضمن في الواجهة) ==========
-local infoInline = Instance.new("Frame")
-infoInline.Name = "TargetInfoInline"
-infoInline.Position = UDim2.new(0, 182, 0, 34)        -- جنب زر العين
-infoInline.Size = UDim2.new(1, -192, 0, 28)
-infoInline.BackgroundTransparency = 1
-infoInline.Parent = main
+TargetButton.MouseButton1Click:Connect(function()
+    targetingEnabled = not targetingEnabled
+    updateTargetButtonVisual()
+    if targetingEnabled then
+        showNotification("🎯 وضع الاستهداف شغال - اضغط على اللاعب")
+    else
+        showNotification("⛔ تم إيقاف الاستهداف")
+    end
+end)
 
-local avatarInline = Instance.new("ImageLabel")
-avatarInline.Size = UDim2.fromOffset(24, 24)
-avatarInline.Position = UDim2.new(0, 0, 0.5, -12)
-avatarInline.BackgroundColor3 = Color3.fromRGB(30,30,40)
-avatarInline.BorderSizePixel = 0
-avatarInline.Parent = infoInline
-addCorner(avatarInline, 999)
-
-local infoText = Instance.new("TextLabel")
-infoText.Size = UDim2.new(1, -30, 1, 0)
-infoText.Position = UDim2.new(0, 30, 0, 0)
-infoText.BackgroundTransparency = 1
-infoText.Font = Enum.Font.Gotham
-infoText.TextSize = 11
-infoText.TextXAlignment = Enum.TextXAlignment.Left
-infoText.TextYAlignment = Enum.TextYAlignment.Center
-infoText.TextWrapped = true
-infoText.TextColor3 = Color3.fromRGB(210, 210, 230)
-infoText.Text = "لا يوجد هدف محدد"
-infoText.Parent = infoInline
-
-local currentTargetPlayer: Player? = nil
-
-local function showPlayerInfo(plr: Player)
-	currentTargetPlayer = plr
-
-	local displayName = (plr.DisplayName ~= "" and plr.DisplayName) or plr.Name
-	infoText.Text = string.format("%s\n@%s | ID:%d", displayName, plr.Name, plr.UserId)
-
-	local success, thumb = pcall(function()
-		return Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-	end)
-	if success then
-		avatarInline.Image = thumb
-	else
-		avatarInline.Image = ""
-	end
+local function getPlayerFromPart(part)
+    if not part then return nil end
+    local model = part:FindFirstAncestorOfClass("Model")
+    if not model then return nil end
+    return Players:GetPlayerFromCharacter(model)
 end
 
-Players.PlayerRemoving:Connect(function(plr)
-	if currentTargetPlayer == plr then
-		currentTargetPlayer = nil
-		avatarInline.Image = ""
-		infoText.Text = "اللاعب خرج من السيرفر"
-	end
+mouse.Button1Down:Connect(function()
+    if not targetingEnabled then return end
+    local target = mouse.Target
+    local plr = getPlayerFromPart(target)
+    if not plr then return end
+
+    -- حماية المستخدمين المحميين
+    for _, protectedName in ipairs(protectedUsernames) do
+        if plr.Name:lower() == protectedName:lower() then
+            showNotification("❌ هذا المستخدم محمي")
+            return
+        end
+    end
+
+    updateVictimInfo(plr)
+    targetingEnabled = false
+    updateTargetButtonVisual()
+    showNotification("🎯 تم استهداف: "..plr.Name)
 end)
 
--- ====== صندوق الأوامر 1 ======
-local autoLbl1 = Instance.new("TextLabel")
-autoLbl1.Size = UDim2.new(1, -20, 0, 16)
-autoLbl1.Position = UDim2.new(0, 10, 0, 66)
-autoLbl1.BackgroundTransparency = 1
-autoLbl1.TextColor3 = Color3.fromRGB(200,210,255)
-autoLbl1.TextXAlignment = Enum.TextXAlignment.Left
-autoLbl1.Font = Enum.Font.GothamSemibold
-autoLbl1.TextSize = 12
-autoLbl1.Text = "أوامر 1 (تلقائي مع استهداف):"
-autoLbl1.Parent = main
+-----------------[ ربط الأزرار بالوظائف ]-----------------
 
-local autoBox1 = Instance.new("TextBox")
-autoBox1.Size = UDim2.new(1, -20, 0, 52)
-autoBox1.Position = UDim2.new(0, 10, 0, 84)
-autoBox1.MultiLine = true
-autoBox1.TextWrapped = true
-autoBox1.TextXAlignment = Enum.TextXAlignment.Left
-autoBox1.TextYAlignment = Enum.TextYAlignment.Top
-autoBox1.BackgroundColor3 = Color3.fromRGB(34,40,60)
-autoBox1.TextColor3 = Color3.fromRGB(240,240,240)
-autoBox1.ClearTextOnFocus = false
-autoBox1.Font = Enum.Font.Code
-autoBox1.TextSize = 12
-autoBox1.Text = ";paint pink ;titlepk اًلًجًرًاًرًهً اًلًعًفًوًيًهً"
-autoBox1.Parent = main
-addCorner(autoBox1, 6)
-addStroke(autoBox1, 1, Color3.fromRGB(0,0,0))
-
-local autoSend1 = Instance.new("TextButton")
-autoSend1.Size = UDim2.new(0, 94, 0, 26)
-autoSend1.Position = UDim2.new(1, -104, 0, 140)
-autoSend1.Text = "إرسال 1"
-autoSend1.BackgroundColor3 = Color3.fromRGB(60,90,160)
-autoSend1.TextColor3 = Color3.fromRGB(255,255,255)
-autoSend1.Font = Enum.Font.GothamBold
-autoSend1.TextSize = 13
-autoSend1.Parent = main
-addCorner(autoSend1, 6)
-addStroke(autoSend1, 1, Color3.fromRGB(0,0,0))
-
--- ====== زر "إرسال الكل" ======
-local sendAll = Instance.new("TextButton")
-sendAll.Size = UDim2.new(0, 110, 0, 26)
-sendAll.Position = UDim2.new(0.5, -55, 0, 212)
-sendAll.Text = "إرسال الكل"
-sendAll.BackgroundColor3 = Color3.fromRGB(90, 90, 110)
-sendAll.TextColor3 = Color3.fromRGB(255,255,255)
-sendAll.Font = Enum.Font.GothamBold
-sendAll.TextSize = 13
-sendAll.Parent = main
-addCorner(sendAll, 6)
-addStroke(sendAll, 1, Color3.fromRGB(0,0,0))
-
--- ====== صندوق الأوامر 2 ======
-local autoLbl2 = Instance.new("TextLabel")
-autoLbl2.Size = UDim2.new(1, -20, 0, 16)
-autoLbl2.Position = UDim2.new(0, 10, 0, 170)
-autoLbl2.BackgroundTransparency = 1
-autoLbl2.TextColor3 = Color3.fromRGB(200,210,255)
-autoLbl2.TextXAlignment = Enum.TextXAlignment.Left
-autoLbl2.Font = Enum.Font.GothamSemibold
-autoLbl2.TextSize = 12
-autoLbl2.Text = "أوامر 2 (تلقائي مع استهداف):"
-autoLbl2.Parent = main
-
-local autoBox2 = Instance.new("TextBox")
-autoBox2.Size = UDim2.new(1, -20, 0, 52)
-autoBox2.Position = UDim2.new(0, 10, 0, 188)
-autoBox2.MultiLine = true
-autoBox2.TextWrapped = true
-autoBox2.TextXAlignment = Enum.TextXAlignment.Left
-autoBox2.TextYAlignment = Enum.TextYAlignment.Top
-autoBox2.BackgroundColor3 = Color3.fromRGB(34,40,60)
-autoBox2.TextColor3 = Color3.fromRGB(240,240,240)
-autoBox2.ClearTextOnFocus = false
-autoBox2.Font = Enum.Font.Code
-autoBox2.TextSize = 12
-autoBox2.Text = ";chibify ;aura ;neon ;height 0 ;color ;hotdance 3"
-autoBox2.Parent = main
-addCorner(autoBox2, 6)
-addStroke(autoBox2, 1, Color3.fromRGB(0,0,0))
-
-local autoSend2 = Instance.new("TextButton")
-autoSend2.Size = UDim2.new(0, 94, 0, 26)
-autoSend2.Position = UDim2.new(1, -104, 0, 244)
-autoSend2.Text = "إرسال 2"
-autoSend2.BackgroundColor3 = Color3.fromRGB(80,120,90)
-autoSend2.TextColor3 = Color3.fromRGB(255,255,255)
-autoSend2.Font = Enum.Font.GothamBold
-autoSend2.TextSize = 13
-autoSend2.Parent = main
-addCorner(autoSend2, 6)
-addStroke(autoSend2, 1, Color3.fromRGB(0,0,0))
-
--- تحذير
-local warnLbl = Instance.new("TextLabel")
-warnLbl.Size = UDim2.new(1, -20, 0, 18)
-warnLbl.Position = UDim2.new(0, 10, 1, -20)
-warnLbl.BackgroundTransparency = 1
-warnLbl.TextColor3 = Color3.fromRGB(255,200,120)
-warnLbl.Font = Enum.Font.Gotham
-warnLbl.TextSize = 11
-warnLbl.Text = ""
-warnLbl.TextWrapped = true
-warnLbl.Parent = main
-
--- إظهار/إخفاء
-local visible = true
-toggle.MouseButton1Click:Connect(function()
-	visible = not visible
-	main.Visible = visible
+-- تحكم
+buttonInstances["spectate"].MouseButton1Click:Connect(toggleSpectate)
+buttonInstances["teleport"].MouseButton1Click:Connect(teleportToPlayer)
+buttonInstances["reset"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";re")
+end)
+buttonInstances["to"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";to")
+end)
+buttonInstances["view"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";view")
+end)
+buttonInstances["unview"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";unview")
 end)
 
--- ========== زر الاستهداف (ثابت تحت يمين) ==========
-local aimBtn = Instance.new("TextButton")
-aimBtn.Name = "AimButton"
-aimBtn.Size = UDim2.fromOffset(90, 34)
-aimBtn.Position = UDim2.new(1, -102, 1, -46)
-aimBtn.AnchorPoint = Vector2.new(1, 1)
-aimBtn.Text = "استهداف"
-aimBtn.BackgroundColor3 = Color3.fromRGB(35,35,35)
-aimBtn.TextColor3 = Color3.fromRGB(240,240,240)
-aimBtn.AutoButtonColor = true
-aimBtn.Font = Enum.Font.GothamBold
-aimBtn.TextSize = 13
-aimBtn.Parent = gui
-addCorner(aimBtn, 8)
-addStroke(aimBtn, 1.2, Color3.fromRGB(0,0,0))
+-- بانق
+buttonInstances["bang"].MouseButton1Click:Connect(toggleBang)
+buttonInstances["bangFront"].MouseButton1Click:Connect(toggleBangFront)
+buttonInstances["headSuck"].MouseButton1Click:Connect(toggleHeadSuck)
+buttonInstances["skidFling"].MouseButton1Click:Connect(toggleSkidFling)
 
-local aimHint = Instance.new("TextLabel")
-aimHint.Size = UDim2.fromOffset(140, 22)
-aimHint.Position = UDim2.new(0.5, -70, 1, -130)
-aimHint.AnchorPoint = Vector2.new(0.5, 1)
-aimHint.BackgroundColor3 = Color3.fromRGB(0,0,0)
-aimHint.BackgroundTransparency = 0.35
-aimHint.TextColor3 = Color3.fromRGB(255,255,255)
-aimHint.Font = Enum.Font.GothamBold
-aimHint.TextSize = 12
-aimHint.Text = ""
-aimHint.TextScaled = false
-aimHint.Visible = false
-aimHint.Parent = gui
-addCorner(aimHint, 6)
+-- أوتو Reset / StopAll / Cripple
+buttonInstances["autoReset"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoReset", function()
+        executeVictimCommand(";re")
+    end, 2)
+end)
 
--- ========== استهداف بالضغط ==========
-local selecting = false
-local clickConn: RBXScriptConnection? = nil
+buttonInstances["stopAll"].MouseButton1Click:Connect(executeStopAll)
+buttonInstances["autoStopAll"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoStopAll", executeStopAll, 4)
+end)
 
-local function stopSelecting(msg)
-	selecting = false
-	aimHint.Visible = false
-	if clickConn then clickConn:Disconnect() clickConn = nil end
-	if msg then warnLbl.Text = msg end
+buttonInstances["cripple"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";sit")
+end)
+buttonInstances["autoCripple"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCripple", function()
+        executeVictimCommand(";sit")
+    end, 2)
+end)
+
+-- تعليق / طيران / سبيد
+buttonInstances["flyInAir"].MouseButton1Click:Connect(executeFlyInAir)
+buttonInstances["autoFlyInAir"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoFlyInAir", executeFlyInAir, 3)
+end)
+
+buttonInstances["suspendF"].MouseButton1Click:Connect(executeSuspendF)
+buttonInstances["unsuspendF"].MouseButton1Click:Connect(executeUnsuspendF)
+buttonInstances["autoSuspendF"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoSuspendF", executeSuspendF, 2)
+end)
+
+buttonInstances["suspendJump"].MouseButton1Click:Connect(executeSuspendJump)
+buttonInstances["unsuspendJump"].MouseButton1Click:Connect(executeUnsuspendJump)
+buttonInstances["autoJump"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoJump", function()
+        executeVictimCommand(";jump")
+    end, 2)
+end)
+
+buttonInstances["suspendVictim"].MouseButton1Click:Connect(executeSuspendVictim)
+buttonInstances["unsuspendVictim"].MouseButton1Click:Connect(executeUnsuspendVictim)
+
+buttonInstances["suspendFly"].MouseButton1Click:Connect(executeSuspendFly)
+buttonInstances["unsuspendFly"].MouseButton1Click:Connect(executeUnsuspendFly)
+
+buttonInstances["fly60"].MouseButton1Click:Connect(function() executeFly(60) end)
+buttonInstances["fly120"].MouseButton1Click:Connect(function() executeFly(120) end)
+buttonInstances["fly220"].MouseButton1Click:Connect(function() executeFly(220) end)
+buttonInstances["unfly"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";unfly")
+end)
+
+buttonInstances["speed60"].MouseButton1Click:Connect(function() executeSpeed(60) end)
+buttonInstances["speed120"].MouseButton1Click:Connect(function() executeSpeed(120) end)
+buttonInstances["speed220"].MouseButton1Click:Connect(function() executeSpeed(220) end)
+
+-- أشكال / سكنات / أحجام
+buttonInstances["dog"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";dog")
+end)
+buttonInstances["autoDog"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoDog", function()
+        executeVictimCommand(";dog")
+    end, 2)
+end)
+
+buttonInstances["worm"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";worm")
+end)
+buttonInstances["neon"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";neon")
+end)
+buttonInstances["gold"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";gold")
+end)
+buttonInstances["glass"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";glass")
+end)
+buttonInstances["ref"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";ref")
+end)
+
+buttonInstances["size1"].MouseButton1Click:Connect(function() executeSize(1) end)
+buttonInstances["size2"].MouseButton1Click:Connect(function() executeSize(2) end)
+buttonInstances["size3"].MouseButton1Click:Connect(function() executeSize(3) end)
+
+buttonInstances["charCrazy"].MouseButton1Click:Connect(function()
+    executeCharSkin("crazydalejrd")
+end)
+buttonInstances["charMiri"].MouseButton1Click:Connect(function()
+    executeCharSkin("miri")
+end)
+buttonInstances["char"].MouseButton1Click:Connect(function()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";char "..victim.Name.." ")
+end)
+buttonInstances["unchar"].MouseButton1Click:Connect(function()
+    local victim = requireVictim()
+    if not victim then return end
+    executeCommand(";unchar "..victim.Name.." ")
+end)
+
+buttonInstances["shirt"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";shirt")
+end)
+buttonInstances["pants"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";pants")
+end)
+buttonInstances["head"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";head")
+end)
+
+-- ألوان
+buttonInstances["black"].MouseButton1Click:Connect(function() executeColor("Black") end)
+buttonInstances["white"].MouseButton1Click:Connect(executeWhite)
+buttonInstances["pink"].MouseButton1Click:Connect(function() executeColor("Pink") end)
+buttonInstances["purple"].MouseButton1Click:Connect(function() executeColor("Purple") end)
+buttonInstances["blue"].MouseButton1Click:Connect(function() executeColor("Blue") end)
+buttonInstances["yellow"].MouseButton1Click:Connect(function() executeColor("Yellow") end)
+buttonInstances["red"].MouseButton1Click:Connect(function() executeColor("Red") end)
+buttonInstances["green"].MouseButton1Click:Connect(function() executeColor("Green") end)
+buttonInstances["uncolour"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";uncolour")
+end)
+
+-- رقص و إيموت
+buttonInstances["fryDance"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";fryDance")
+end)
+buttonInstances["takethel"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";takethel")
+end)
+buttonInstances["ratDance"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";ratDance")
+end)
+buttonInstances["cuteSit"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";cuteSit")
+end)
+buttonInstances["fakeDeath"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";fakeDeath")
+end)
+
+buttonInstances["fat"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";fat")
+end)
+buttonInstances["thin"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";thin")
+end)
+buttonInstances["hide"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";hide")
+end)
+buttonInstances["buffify"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";buffify")
+end)
+buttonInstances["tank"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";tank")
+end)
+buttonInstances["helicopter"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";helicopter")
+end)
+buttonInstances["plane"].MouseButton1Click:Connect(executePlane)
+buttonInstances["car"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";car")
+end)
+buttonInstances["box"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";Box")
+end)
+buttonInstances["emote"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";emote")
+end)
+buttonInstances["phase"].MouseButton1Click:Connect(executePhase)
+
+buttonInstances["smoke"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";smoke")
+end)
+buttonInstances["unsmoke"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";unsmoke")
+end)
+buttonInstances["fire"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";fire")
+end)
+buttonInstances["unfire"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";unfire")
+end)
+buttonInstances["shine"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";shine")
+end)
+buttonInstances["ghost"].MouseButton1Click:Connect(function()
+    executeVictimCommand(";ghost")
+end)
+
+-- اورا تلقائي
+if buttonInstances["autoAura"] then
+    buttonInstances["autoAura"].MouseButton1Click:Connect(function()
+        toggleAutoButton("autoAura", function()
+            executeVictimCommand(";aura")
+        end, 2)
+    end)
 end
 
-local function findPlayerFromTarget(inst: Instance)
-	if not inst then return nil end
-	local node = inst
-	for _ = 1, 8 do
-		if not node then break end
-		if node:IsA("Model") and node:FindFirstChildOfClass("Humanoid") then
-			return Players:GetPlayerFromCharacter(node)
-		end
-		node = node.Parent
-	end
-	return nil
+-----------------[ نسخ + تايتل مدموج (1-20) ]-----------------
+
+local copyTitleText = "اًلًجًرًاًرًهً اًلًعًفًوًيًهً"
+
+local copyPatterns = {
+    function(n,t) return ";dog "..n.." ;size "..n.." 3 ;neon "..n.." ;colour "..n.." Pink ;titlepk "..n.." "..t end, -- 1
+    function(n,t) return ";worm "..n.." ;size "..n.." 3 ;neon "..n.." ;colour "..n.." Black ;titlepk "..n.." "..t end, -- 2
+    function(n,t) return ";emote "..n.." ;size "..n.." 2 ;neon "..n.." ;colour "..n.." White ;titlepk "..n.." "..t end, -- 3
+    function(n,t) return ";fat "..n.." ;neon "..n.." ;colour "..n.." Red ;fire "..n.." ;titlepk "..n.." "..t end, -- 4
+    function(n,t) return ";thin "..n.." ;neon "..n.." ;colour "..n.." Blue ;smoke "..n.." ;titlepk "..n.." "..t end, -- 5
+    function(n,t) return ";buffify "..n.." ;gold "..n.." ;colour "..n.." Yellow ;titlepk "..n.." "..t end, -- 6
+    function(n,t) return ";dog "..n.." ;worm "..n.." ;neon "..n.." ;colour "..n.." Purple ;titlepk "..n.." "..t end, -- 7
+    function(n,t) return ";hide "..n.." ;glass "..n.." ;shine "..n.." ;ghost "..n.." ;titlepk "..n.." "..t end, -- 8
+    function(n,t) return ";tank "..n.." ;neon "..n.." ;colour "..n.." Green ;titlepk "..n.." "..t end, -- 9
+    function(n,t) return ";car "..n.." ;neon "..n.." ;colour "..n.." Orange ;titlepk "..n.." "..t end, -- 10
+    function(n,t) return ";plane "..n.." ;neon "..n.." ;colour "..n.." Blue ;titlepk "..n.." "..t end, -- 11
+    function(n,t) return ";helicopter "..n.." ;neon "..n.." ;colour "..n.." Pink ;titlepk "..n.." "..t end, -- 12
+    function(n,t) return ";phase "..n.." ;smoke "..n.." ;ghost "..n.." ;titlepk "..n.." "..t end, -- 13
+    function(n,t) return ";fire "..n.." ;smoke "..n.." ;neon "..n.." ;colour "..n.." Red ;titlepk "..n.." "..t end, -- 14
+    function(n,t) return ";fryDance "..n.." ;size "..n.." 2 ;neon "..n.." ;colour "..n.." Pink ;titlepk "..n.." "..t end, -- 15
+    function(n,t) return ";takethel "..n.." ;size "..n.." 3 ;neon "..n.." ;colour "..n.." Purple ;titlepk "..n.." "..t end, -- 16
+    function(n,t) return ";ratDance "..n.." ;fat "..n.." ;neon "..n.." ;colour "..n.." Yellow ;titlepk "..n.." "..t end, -- 17
+    function(n,t) return ";cuteSit "..n.." ;size "..n.." 1 ;neon "..n.." ;colour "..n.." White ;titlepk "..n.." "..t end, -- 18
+    function(n,t) return ";fakeDeath "..n.." ;ghost "..n.." ;shine "..n.." ;colour "..n.." Black ;titlepk "..n.." "..t end, -- 19
+    function(n,t) return ";freakify "..n.." ;neon "..n.." ;colour "..n.." Pink ;titlepk "..n.." "..t end, -- 20
+}
+
+local function doCopyIndex(index)
+    local victim = requireVictim()
+    if not victim then return end
+    local n = victim.Name
+    local t = copyTitleText
+    local pattern = copyPatterns[index]
+    if pattern then
+        executeCommand(pattern(n, t))
+    end
 end
 
-aimBtn.MouseButton1Click:Connect(function()
-	if selecting then
-		stopSelecting()
-		return
-	end
-	selecting = true
-	aimHint.Text = "اختر لاعب"
-	aimHint.Visible = true
-	warnLbl.Text = ""
-	clickConn = Mouse.Button1Down:Connect(function()
-		local plr = findPlayerFromTarget(Mouse.Target)
-		if plr then
-			targetBox.Text = normTarget(plr.Name)
-			showPlayerInfo(plr)
-			stopSelecting("✅ تم التقاط الهدف: "..targetBox.Text)
-		else
-			stopSelecting("⚠ اضغط على لاعب.")
-		end
-	end)
-end)
-
--- لو كتب أول 3 حروف وضغط Enter
-targetBox.FocusLost:Connect(function(enterPressed)
-	if not enterPressed then return end
-	local t = normTarget(targetBox.Text)
-	if t == "" then return end
-	for _,plr in ipairs(Players:GetPlayers()) do
-		if plr.Name:sub(1, #t):lower() == t then
-			showPlayerInfo(plr)
-			warnLbl.Text = "✅ تم تعيين الهدف: "..t
-			return
-		end
-	end
-	avatarInline.Image = ""
-	infoText.Text = "⚠ ما لقيت لاعب بهالحروف."
-end)
-
--- إذا تغيّر الهدف، وفينا view شغال، نسوي unview تلقائي
-targetBox:GetPropertyChangedSignal("Text"):Connect(function()
-	local t = normTarget(targetBox.Text)
-	if (t == "" or t ~= viewTarget) and viewState and viewTarget then
-		sendChat("/e ;unview "..viewTarget)
-		viewState = false
-		viewTarget = nil
-		updateViewVisual()
-	end
-end)
-
--- ========== إرسال الأوامر (مع فصل أوامر الـ title) ==========
-
-local function buildProcessedFromBox(box: TextBox)
-	local target = normTarget(targetBox.Text)
-	if target == "" then
-		return nil, "⚠ اكتب أول 3 حروف من الهدف."
-	end
-
-	local processed = processAuto(box.Text, target)
-	if processed == "" then
-		return nil, "⚠ لا يوجد أوامر."
-	end
-
-	return processed, nil
+-- أزرار النسخ 1-20
+for i = 1, 20 do
+    local btnName = "copy"..i
+    if buttonInstances[btnName] then
+        buttonInstances[btnName].MouseButton1Click:Connect(function()
+            doCopyIndex(i)
+        end)
+    end
 end
 
-local function sendProcessedWithTitleSplit(processed: string)
-	if not processed or processed == "" then return end
+-- نسخ تلقائي 1-6 (تكرار نفس الأنماط)
+buttonInstances["autoCopy1"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCopy1", function() doCopyIndex(1) end, 2)
+end)
+buttonInstances["autoCopy2"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCopy2", function() doCopyIndex(2) end, 2)
+end)
+buttonInstances["autoCopy3"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCopy3", function() doCopyIndex(3) end, 2)
+end)
+buttonInstances["autoCopy4"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCopy4", function() doCopyIndex(4) end, 2)
+end)
+buttonInstances["autoCopy5"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCopy5", function() doCopyIndex(5) end, 2)
+end)
+buttonInstances["autoCopy6"].MouseButton1Click:Connect(function()
+    toggleAutoButton("autoCopy6", function() doCopyIndex(6) end, 2)
+end)
 
-	local normalSegs = {}
-	local titleSegs = {}
+-----------------[ كومبو اخفاء (سكن تخريب + شفاف + ref + حجم 3) ]-----------------
 
-	for seg in processed:gmatch(";[^;]+") do
-		local body = seg:sub(2):gsub("^%s+",""):gsub("%s+$","")
-		if body ~= "" then
-			local cmd, rest = splitFirstWord(body)
-			local lc = (cmd or ""):lower()
-
-			if lc == "title" or lc == "titlep" or lc == "titlepk" then
-				table.insert(titleSegs, ";"..body)
-			else
-				table.insert(normalSegs, ";"..body)
-			end
-		end
-	end
-
-	local function sendGroup(segs)
-		if #segs == 0 then return end
-		local msg = "/e "..table.concat(segs, " ")
-		if #msg > 200 then
-			warnLbl.Text = ("⚠ طول الرسالة %d (حد ~200) - قلل الأوامر أو قلل نص التايتل."):format(#msg)
-		end
-		sendChat(msg)
-	end
-
-	-- أولاً الأوامر العادية
-	sendGroup(normalSegs)
-
-	-- ثم أوامر التايتل لوحدها
-	if #titleSegs > 0 then
-		task.wait(0.2)
-		sendGroup(titleSegs)
-	end
+local function doHideComboSingle()
+    local victim = requireVictim()
+    if not victim then return end
+    local n = victim.Name
+    -- كل الأوامر في رسالة واحدة
+    executeCommand(";char "..n.." crazydalejrd ;glass "..n.." ;ref "..n.." ;size "..n.." 3")
 end
 
-local function doSendFromBox(box: TextBox)
-	warnLbl.Text = ""
-	local processed, err = buildProcessedFromBox(box)
-	if not processed then
-		warnLbl.Text = err or "⚠ خطأ غير معروف."
-		return
-	end
-
-	sendProcessedWithTitleSplit(processed)
+local function doHideComboMulti()
+    local victim = requireVictim()
+    if not victim then return end
+    -- كل أمر لوحده
+    executeCharSkin("crazydalejrd")
+    executeVictimCommand(";glass")
+    executeVictimCommand(";ref")
+    executeSize(3)
 end
 
-autoSend1.MouseButton1Click:Connect(function()
-	doSendFromBox(autoBox1)
+if buttonInstances["hideCombo1"] then
+    buttonInstances["hideCombo1"].MouseButton1Click:Connect(doHideComboSingle)
+end
+
+if buttonInstances["hideCombo2"] then
+    buttonInstances["hideCombo2"].MouseButton1Click:Connect(doHideComboMulti)
+end
+
+if buttonInstances["autoHideCombo"] then
+    buttonInstances["autoHideCombo"].MouseButton1Click:Connect(function()
+        toggleAutoButton("autoHideCombo", doHideComboMulti, 2)
+    end)
+end
+
+-- سبام
+buttonInstances["spam1"].MouseButton1Click:Connect(sendSpam1)
+buttonInstances["spam2"].MouseButton1Click:Connect(sendSpam2)
+buttonInstances["spam3"].MouseButton1Click:Connect(sendSpam3)
+buttonInstances["spam4"].MouseButton1Click:Connect(sendSpam4)
+buttonInstances["spam5"].MouseButton1Click:Connect(sendSpam5)
+
+buttonInstances["autoSpam1"].MouseButton1Click:Connect(function()
+    toggleAutoSpam("autoSpam1", sendSpam1)
+end)
+buttonInstances["autoSpam2"].MouseButton1Click:Connect(function()
+    toggleAutoSpam("autoSpam2", sendSpam2)
+end)
+buttonInstances["autoSpam3"].MouseButton1Click:Connect(function()
+    toggleAutoSpam("autoSpam3", sendSpam3)
+end)
+buttonInstances["autoSpam4"].MouseButton1Click:Connect(function()
+    toggleAutoSpam("autoSpam4", sendSpam4)
+end)
+buttonInstances["autoSpam5"].MouseButton1Click:Connect(function()
+    toggleAutoSpam("autoSpam5", sendSpam5)
 end)
 
-autoSend2.MouseButton1Click:Connect(function()
-	doSendFromBox(autoBox2)
+-- حماية
+buttonInstances["antiCopy"].MouseButton1Click:Connect(toggleAntiCopy)
+buttonInstances["antiCopyNoMod"].MouseButton1Click:Connect(toggleAntiCopyNoMod)
+
+-----------------[ زر فتح / إغلاق ]-----------------
+
+ToggleButton.MouseButton1Click:Connect(function()
+    local visible = not MainFrame.Visible
+    MainFrame.Visible = visible
+    if visible then
+        MainFrame.Size = UDim2.new(0,0,0,0)
+        MainFrame.Position = UDim2.new(0.5,0,0.5,0)
+        TweenService:Create(MainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0,420,0,500),
+            Position = UDim2.new(0.5,-210,0.5,-250)
+        }):Play()
+    end
 end)
 
-sendAll.MouseButton1Click:Connect(function()
-	warnLbl.Text = ""
+-----------------[ تنبيهات دخول/خروج الضحية ]-----------------
 
-	local processed2, err2 = buildProcessedFromBox(autoBox2)
-	if not processed2 then
-		warnLbl.Text = err2 or "⚠ لا يوجد أوامر في 2."
-		return
-	end
-	sendProcessedWithTitleSplit(processed2)
-
-	task.wait(0.25)
-
-	local processed1, err1 = buildProcessedFromBox(autoBox1)
-	if processed1 then
-		sendProcessedWithTitleSplit(processed1)
-	end
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+    if currentVictimName and leavingPlayer.Name == currentVictimName then
+        showNotification("🛑 الضحية "..leavingPlayer.Name.." خرجت من السيرفر")
+    end
 end)
 
--- ========== زر VIEW ==========
-viewBtn.MouseButton1Click:Connect(function()
-	local target = normTarget(targetBox.Text)
-	if target == "" then
-		warnLbl.Text = "⚠ حدد هدف أولاً (أول 3 حروف)."
-		return
-	end
-
-	-- لو فيه هدف قديم مختلف عليه view نفكه عنه أول
-	if viewState and viewTarget and viewTarget ~= target then
-		sendChat("/e ;unview "..viewTarget)
-	end
-
-	sendChat("/e ;view "..target)
-	viewState = true
-	viewTarget = target
-	updateViewVisual()
-	warnLbl.Text = "👁 تم view على: "..target
+Players.PlayerAdded:Connect(function(joiningPlayer)
+    if currentVictimName and joiningPlayer.Name == currentVictimName then
+        showNotification("✅ الضحية "..joiningPlayer.Name.." رجعت للسيرفر")
+    end
 end)
 
--- ========== زر UNVIEW ==========
-unviewBtn.MouseButton1Click:Connect(function()
-	-- لو فيه هدف محفوظ من قبل نستخدمه، غير كذا نستخدم اللي مكتوب
-	local target = viewTarget or normTarget(targetBox.Text)
+-----------------[ جاهز ]-----------------
 
-	if not target or target == "" then
-		warnLbl.Text = "⚠ ما فيه هدف لفك الـ view."
-		return
-	end
-
-	sendChat("/e ;unview "..target)
-	viewState = false
-	viewTarget = nil
-	updateViewVisual()
-	warnLbl.Text = "🚫 تم unview عن: "..target
-end)
-
-updateViewVisual()
+showNotification("hello rakan")
